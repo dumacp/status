@@ -10,7 +10,7 @@ import (
 	"bytes"
 	"flag"
 	"math/rand"
-	MQTT "github.com/eclipse/paho.mqtt.golang"
+	"github.com/dumacp/pubsub"
 )
 
 var timeout int
@@ -66,13 +66,6 @@ type Status struct {
 	TypeDev		string `json:"type-dev"` 
 }
 
-
-var f MQTT.MessageHandler = func(client MQTT.Client, msg MQTT.Message) {
-  fmt.Printf("TOPIC: %s\n", msg.Topic())
-  fmt.Printf("MSG: %s\n", msg.Payload())
-}
-
-
 func main() {
 
 	flag.Parse()
@@ -90,7 +83,7 @@ func main() {
 	//fmt.Printf("cpuStatus: %v\n", m.CpuStatus)
 
 
-	b2, err := json.Marshal(m)
+	//b2, err := json.Marshal(m)
 	//fmt.Printf("salida: %s\n\n\n", b2)
 
 	uptime := getUptime()
@@ -132,19 +125,19 @@ func main() {
 	timeoutSend := time.Tick( time.Duration(timeout) * time.Second)
 
 
-	opts := MQTT.NewClientOptions().AddBroker("tcp://127.0.0.1:1883")
-	opts.SetClientID("go-simple")
-  	opts.SetDefaultPublishHandler(f)
-
 	//create and start a client using the above ClientOptions
-  	c := MQTT.NewClient(opts)
-  	if token := c.Connect(); token.Wait() && token.Error() != nil {
-   		panic(token.Error())
-  	}
-
-	defer c.Disconnect(250)
-
-
+	pub, err := pubsub.NewConnection("go-gpsnmea")
+        if err != nil {
+		log.Fatal(err)
+	}
+	defer pub.Disconnect()
+	msgChan := make(chan string)
+	go pub.Publish("STATUS/state", msgChan)
+	go func() {
+		for v := range pub.Err {
+			log.Println(v)
+		}
+	}()
 
 	for {
 		rand.Seed(time.Now().UnixNano())
@@ -169,32 +162,34 @@ func main() {
 				m.CpuStatus[2] = cpu.value
 			}
 		case <-timeoutSend:
-			go publish(&m, c)
+			time.Sleep(time.Second * 1)
+			if msg, err := prepare(&m); err != nil {
+				log.Println(err)
+			} else {
+				msgChan <- string(msg)
+			}
 		}
 	}
 }
 
-func publish(m *Status, c MQTT.Client) {
+func prepare(m *Status) ([]byte, error) {
 
 	m.TimeStamp = float64(time.Now().UnixNano())/1000000000
-	
 	uptime := getUptime()
 	usos, errores := usosTransp()
 
 	m.UpTime = uptime
 	m.UsosTranspCount = usos
 	m.ErrsTranspCount = errores
-	
+
 	b3, err := json.Marshal(m)
 
 	if err != nil {
 		log.Println(err)
-		return
+		return nil, err
 	}
-
-	token := c.Publish("STATUS/state", 0, false, b3)
-	token.Wait()
 	log.Printf("message: %s\n",b3)
+	return b3, nil
 }
 
 
@@ -227,10 +222,10 @@ func randCpu(ch chan typeCpu) {
 	for {
 		select {
 		case <-t1:
-			value = float64(rand.Intn(40))
+			value = float64(rand.Intn(100))
 			value5 = value5 + value
 			acc5 = acc5 + 1
-			value5 = value5 + value
+			value15 = value15 + value
 			acc15 = acc15 + 1
 			ch <- typeCpu{name: "one", value: value}
 		case <-t2:
@@ -246,10 +241,10 @@ func randCpu(ch chan typeCpu) {
 				acc15 = 0
 			}
 		case <-talarm:
-			value = float64(rand.Intn(120)) + 50
+			value = float64(rand.Intn(20)) + 80
 			value5 = value5 + value
 			acc5 = acc5 + 1
-			value5 = value5 + value
+			value15 = value15 + value
 			acc15 = acc15 + 1
 			ch <- typeCpu{name: "one", value: value}
 		}
@@ -264,6 +259,7 @@ type typeCpu struct {
 }
 func randVolt(ch chan map[string]float64) {
 	t1 := time.Tick(60 * time.Second)
+	t2 := time.Tick(600 * time.Second)
 	volt := make(map[string]float64)
 	for {
 		select {
@@ -272,25 +268,37 @@ func randVolt(ch chan map[string]float64) {
 			volt["high"] = float64(rand.Intn(400))/100 + 12
 			volt["low"] = -float64(rand.Intn(500))/100 + 12
 			ch <- volt
+		case <-t2:
+			volt["current"] = float64(rand.Intn(200))/100 + 11
+			volt["high"] = float64(rand.Intn(400))/100 + 12
+			volt["low"] = -float64(rand.Intn(800))/100 + 3
+			ch <- volt
 		}
 	}
 }
 
 func usosTransp() (usos int, errores int) {
-	usos = rand.Intn(300) + 50
-	errores = rand.Intn(30)
+	usos = rand.Intn(10)
+	errores = 0
+	if usos > 5 {
+		errores = rand.Intn(3)
+	}
 	return
 }
 
 func randMemory(ch chan int) {
-	t1 := time.Tick(300 * time.Second)
-	t2 := time.Tick(902 * time.Second)
+	t1 := time.Tick(60 * time.Second)
+	t2 := time.Tick(300 * time.Second)
+	t3 := time.Tick(902 * time.Second)
+	temp := 350000
 	for {
 		select {
 		case <- t1:
-			ch <- rand.Intn(2000) + 300000
+			ch <- rand.Intn(10000) + temp
 		case <- t2:
-			ch <- rand.Intn(650000) + 300000
+			temp = rand.Intn(80000) + 300000
+		case <- t3:
+			temp = rand.Intn(650000) + 300000
 		}
 	}
 }
@@ -303,7 +311,7 @@ func randTemp(ch chan int) {
 		case <- t1:
 			ch <- rand.Intn(5) + 32
 		case <- t2:
-			ch <- rand.Intn(12) + 35
+			ch <- rand.Intn(12) + 38
 		}
 	}
 }
