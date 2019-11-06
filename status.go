@@ -1,16 +1,15 @@
 package main
 
-
 import (
-	"fmt"
-	"encoding/json"
-	"time"
-	"os/exec"
-	"log"
 	"bytes"
+	"encoding/json"
 	"flag"
-	"math/rand"
+	"fmt"
 	"github.com/dumacp/pubsub"
+	"log"
+	"math/rand"
+	"os/exec"
+	"time"
 )
 
 var timeout int
@@ -22,9 +21,10 @@ var typeDev string
 var hostname string
 var simImei string
 var simStatus string
+var instance string
 
 func init() {
-        flag.IntVar(&timeout, "timeout", 30, "timeout to capture send status")
+	flag.IntVar(&timeout, "timeout", 30, "timeout to capture send status")
 	flag.StringVar(&mac, "mac", "01:02:03:04:05:06", "device's MAC address (default: 30)")
 	flag.StringVar(&ipEth0, "ipEth0", "192.168.188.23/24", "device's ip address")
 	flag.StringVar(&ipEth1, "ipEth1", "172.23.99.1/29", "device's ip address")
@@ -33,37 +33,38 @@ func init() {
 	flag.StringVar(&hostname, "hostname", "OMVZ7", "device's hostname")
 	flag.StringVar(&simImei, "simImei", "123456789ABCD", "modem's SIM IMEI")
 	flag.StringVar(&simStatus, "simStatus", "OK", "SIM Status")
+	flag.StringVar(&instance, "instance", "", "instance / multi devices")
 }
 
 type DataDevice struct {
-	CurrentValue	int	`json:"currentValue"`
-	TotalValue	int	`json:"totalValue"`
-	Type		string	`json:"type"`
-	UnitInformation string	`json:"unitInformation"`
+	CurrentValue    int    `json:"currentValue"`
+	TotalValue      int    `json:"totalValue"`
+	Type            string `json:"type"`
+	UnitInformation string `json:"unitInformation"`
 }
 
 type Status struct {
-	Gstatus		map[string]interface{}  `json:"gstatus"`
-	SnDev		string  `json:"sn-dev"`
-	SnModem		string	`json:"sn-modem"`
-	SnDisplay	string	`json:"sn-display"`
-	TimeStamp	float64	`json:"timeStamp"`
-	IpMaskMap	map[string][]string	`json:"ipMaskMap"`
-	Hostname	string	`json:"hostname"`
-	AppVers		map[string]string	`json:"AppVers"`
-	SimStatus	string	`json:"simStatus"`
-	SimImei		string	`json:"simImei"`
-	UsosTranspCount	int	`json:"usosTranspCount"`
-	ErrsTranspCount	int	`json:"errsTranspCount"`
-	Volt		map[string]float64	`json:"volt"`
-	Mac		string	`json:"mac"`
-	AppTablesVers	map[string]string	`json:"AppTablesVers"`
-	CpuStatus	[]float64	`json:"cpuStatus"`
-	Dns		[]string	`json:"dns"`
-	UpTime		string	`json:"upTime"`
-	DeviceDataList	[]*DataDevice	`json:"deviceDataList"`
-	Gateway		string	`json:"gateway"`
-	TypeDev		string `json:"type-dev"` 
+	Gstatus         map[string]interface{} `json:"gstatus"`
+	SnDev           string                 `json:"sn-dev"`
+	SnModem         string                 `json:"sn-modem"`
+	SnDisplay       string                 `json:"sn-display"`
+	TimeStamp       float64                `json:"timeStamp"`
+	IpMaskMap       map[string][]string    `json:"ipMaskMap"`
+	Hostname        string                 `json:"hostname"`
+	AppVers         map[string]string      `json:"AppVers"`
+	SimStatus       string                 `json:"simStatus"`
+	SimImei         string                 `json:"simImei"`
+	UsosTranspCount int                    `json:"usosTranspCount"`
+	ErrsTranspCount int                    `json:"errsTranspCount"`
+	Volt            map[string]float64     `json:"volt"`
+	Mac             string                 `json:"mac"`
+	AppTablesVers   map[string]string      `json:"AppTablesVers"`
+	CpuStatus       []float64              `json:"cpuStatus"`
+	Dns             []string               `json:"dns"`
+	UpTime          string                 `json:"upTime"`
+	DeviceDataList  []*DataDevice          `json:"deviceDataList"`
+	Gateway         string                 `json:"gateway"`
+	TypeDev         string                 `json:"type-dev"`
 }
 
 func main() {
@@ -82,7 +83,6 @@ func main() {
 	fmt.Printf("%v\n", m)
 	//fmt.Printf("cpuStatus: %v\n", m.CpuStatus)
 
-
 	//b2, err := json.Marshal(m)
 	//fmt.Printf("salida: %s\n\n\n", b2)
 
@@ -94,7 +94,7 @@ func main() {
 	m.UpTime = uptime
 	m.UsosTranspCount = usos
 	m.ErrsTranspCount = errores
-	m.TimeStamp = float64(time.Now().UnixNano())/1000000000
+	m.TimeStamp = float64(time.Now().UnixNano()) / 1000000000
 	m.Volt["currentValue"] = 12
 	m.Volt["highestValue"] = 12.1
 	m.Volt["lowestValue"] = 11
@@ -105,7 +105,7 @@ func main() {
 	m.IpMaskMap["eth1"][0] = ipEth1
 	m.Hostname = hostname
 	m.Mac = mac
-	m.SimImei =  simImei
+	m.SimImei = simImei
 	m.SimStatus = simStatus
 	m.Gstatus["temperature"] = int(34)
 
@@ -120,19 +120,17 @@ func main() {
 	chCpu := make(chan typeCpu)
 	go randCpu(chCpu)
 
-
-
-	timeoutSend := time.Tick( time.Duration(timeout) * time.Second)
-
+	timeoutSend := time.Tick(time.Duration(timeout) * time.Second)
 
 	//create and start a client using the above ClientOptions
-	pub, err := pubsub.NewConnection("go-gpsnmea")
-        if err != nil {
+	pub, err := pubsub.NewConnection(fmt.Sprintf("go-status-%v", time.Now().UnixNano()))
+	if err != nil {
 		log.Fatal(err)
 	}
 	defer pub.Disconnect()
 	msgChan := make(chan string)
-	go pub.Publish("STATUS/state", msgChan)
+	log.Printf("STATUS%s/state", instance)
+	go pub.Publish(fmt.Sprintf("STATUS%s/state", instance), msgChan)
 	go func() {
 		for v := range pub.Err {
 			log.Println(v)
@@ -174,7 +172,7 @@ func main() {
 
 func prepare(m *Status) ([]byte, error) {
 
-	m.TimeStamp = float64(time.Now().UnixNano())/1000000000
+	m.TimeStamp = float64(time.Now().UnixNano()) / 1000000000
 	uptime := getUptime()
 	usos, errores := usosTransp()
 
@@ -188,10 +186,9 @@ func prepare(m *Status) ([]byte, error) {
 		log.Println(err)
 		return nil, err
 	}
-	log.Printf("message: %s\n",b3)
+	log.Printf("message: %s\n", b3)
 	return b3, nil
 }
-
 
 func getUptime() (uptime string) {
 
@@ -230,13 +227,13 @@ func randCpu(ch chan typeCpu) {
 			ch <- typeCpu{name: "one", value: value}
 		case <-t2:
 			if acc5 != 0 {
-				ch <- typeCpu{name: "five", value: value5/float64(acc5)}
+				ch <- typeCpu{name: "five", value: value5 / float64(acc5)}
 				value5 = 0
 				acc5 = 0
 			}
 		case <-t3:
 			if acc15 != 0 {
-				ch <- typeCpu{name: "fifteen", value: value15/float64(acc15)}
+				ch <- typeCpu{name: "fifteen", value: value15 / float64(acc15)}
 				value15 = 0
 				acc15 = 0
 			}
@@ -254,9 +251,10 @@ func randCpu(ch chan typeCpu) {
 /**/
 
 type typeCpu struct {
-	name	string
-	value	float64
+	name  string
+	value float64
 }
+
 func randVolt(ch chan map[string]float64) {
 	t1 := time.Tick(60 * time.Second)
 	t2 := time.Tick(600 * time.Second)
@@ -293,11 +291,11 @@ func randMemory(ch chan int) {
 	temp := 350000
 	for {
 		select {
-		case <- t1:
+		case <-t1:
 			ch <- rand.Intn(10000) + temp
-		case <- t2:
+		case <-t2:
 			temp = rand.Intn(80000) + 300000
-		case <- t3:
+		case <-t3:
 			temp = rand.Intn(650000) + 300000
 		}
 	}
@@ -308,9 +306,9 @@ func randTemp(ch chan int) {
 	t2 := time.Tick(1800 * time.Second)
 	for {
 		select {
-		case <- t1:
+		case <-t1:
 			ch <- rand.Intn(5) + 32
-		case <- t2:
+		case <-t2:
 			ch <- rand.Intn(12) + 38
 		}
 	}
@@ -321,12 +319,12 @@ func randSd(ch chan int) {
 	t2 := time.Tick(1800 * time.Second)
 	for {
 		select {
-		case <- t1:
+		case <-t1:
 			ch <- rand.Intn(500) + 500
-		case <- t2:
+		case <-t2:
 			ch <- rand.Intn(6000) + 1000
 		}
 	}
 }
-/**/
 
+/**/
