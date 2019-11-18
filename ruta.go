@@ -1,6 +1,6 @@
 package main
 
-var ruta = `{
+var ruta = []byte(`{
 "ruta": [
     [
       [
@@ -1430,4 +1430,4 @@ var ruta = `{
         6.2814214
       ]
     ]
-  ]}`
+  ]}`)

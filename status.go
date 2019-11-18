@@ -10,6 +10,8 @@ import (
 	"os/exec"
 	"time"
 
+	"github.com/dumacp/gpsnmea"
+
 	"github.com/dumacp/pubsub"
 )
 
@@ -22,7 +24,8 @@ var typeDev string
 var hostname string
 var simImei string
 var simStatus string
-var instance string
+
+//var instance string
 
 func init() {
 	flag.IntVar(&timeout, "timeout", 30, "timeout to capture send status")
@@ -34,7 +37,7 @@ func init() {
 	flag.StringVar(&hostname, "hostname", "OMVZ7", "device's hostname")
 	flag.StringVar(&simImei, "simImei", "123456789ABCD", "modem's SIM IMEI")
 	flag.StringVar(&simStatus, "simStatus", "OK", "SIM Status")
-	flag.StringVar(&instance, "instance", "", "instance / multi devices")
+	//flag.StringVar(&instance, "instance", "", "instance / multi devices")
 }
 
 type DataDevice struct {
@@ -66,10 +69,12 @@ type Status struct {
 	DeviceDataList              []*DataDevice          `json:"deviceDataList"`
 	Gateway                     string                 `json:"gateway"`
 	TypeDev                     string                 `json:"type-dev"`
-	FrontDoorPassengerUpCount   int                    `json:"frontDoorPassengerUpCount"`
-	FrontDoorPassengerDownCount int                    `json:"frontDoorPassengerDownCount"`
-	BackDoorPassengerUpCount    int                    `json:"backDoorPassengerUpCount"`
-	BackDoorPassengerDownCount  int                    `json:"backDoorPassengerDownCount"`
+	TurnstileUpAccum            int                    `json:"turnstileUpAccum"`
+	TurnstileDownAccum          int                    `json:"turnstileDownAccum"`
+	FrontDoorPassengerUpAccum   int                    `json:"frontDoorPassengerUpAccum"`
+	FrontDoorPassengerDownAccum int                    `json:"frontDoorPassengerDownAccum"`
+	BackDoorPassengerUpAccum    int                    `json:"backDoorPassengerUpAccum"`
+	BackDoorPassengerDownAccum  int                    `json:"backDoorPassengerDownAccum"`
 }
 
 func main() {
@@ -134,13 +139,22 @@ func main() {
 	}
 	defer pub.Disconnect()
 	msgChan := make(chan string)
-	log.Printf("STATUS%s/state", instance)
-	go pub.Publish(fmt.Sprintf("STATUS%s/state", instance), msgChan)
+	go pub.Publish("STATUS/state", msgChan)
 	go func() {
 		for v := range pub.Err {
 			log.Println(v)
 		}
 	}()
+
+	evtChan := make(chan string)
+	go pub.Publish("EVENTS/event", evtChan)
+	go func() {
+		for v := range pub.Err {
+			log.Println(v)
+		}
+	}()
+
+	go events(evtChan)
 
 	for {
 		rand.Seed(time.Now().UnixNano())
@@ -181,10 +195,12 @@ func prepare(m *Status) ([]byte, error) {
 	uptime := getUptime()
 	//usos, errores := usosTransp()
 	counters := contadores()
-	m.FrontDoorPassengerUpCount = counters[0]
-	m.FrontDoorPassengerDownCount = counters[1]
-	m.BackDoorPassengerUpCount = counters[2]
-	m.BackDoorPassengerDownCount = counters[3]
+	m.TurnstileUpAccum += counters[0]
+	m.TurnstileDownAccum += counters[1]
+	m.FrontDoorPassengerUpAccum += counters[2]
+	m.FrontDoorPassengerDownAccum += counters[3]
+	m.BackDoorPassengerUpAccum += counters[4]
+	m.BackDoorPassengerDownAccum += counters[5]
 
 	m.UpTime = uptime
 	m.UsosTranspCount = 0
@@ -295,17 +311,19 @@ func usosTransp() (usos int, errores int) {
 }
 
 func contadores() []int {
-	puertaDelanteraIngresos := rand.Intn(10)
+	turnstileUpCount := rand.Intn(10)
+	puertaDelanteraIngresos := turnstileUpCount
+	turnstileDownCount := 0
 	puertaTraseraSalidas := 0
 	puertaDelanteraSalidas := 0
 	puertaTraseraIngresos := 0
 	if puertaDelanteraIngresos > 3 {
 		puertaTraseraSalidas = rand.Intn(5)
 	}
-	if puertaDelanteraSalidas > 3 {
+	if puertaTraseraSalidas > 3 {
 		puertaDelanteraSalidas = rand.Intn(3)
 	}
-	return []int{puertaDelanteraIngresos, puertaDelanteraSalidas, puertaTraseraIngresos, puertaTraseraSalidas}
+	return []int{turnstileUpCount, turnstileDownCount, puertaDelanteraIngresos, puertaDelanteraSalidas, puertaTraseraIngresos, puertaTraseraSalidas}
 }
 
 func randMemory(ch chan int) {
@@ -368,7 +386,7 @@ func events(ch chan string) {
 	itirenario := values[0]
 	itirenario = append(itirenario, values[1]...)
 
-	chPoints := make(chan [][]float64, 0)
+	chPoints := make(chan []float64, 0)
 
 	go func() {
 		for {
@@ -379,18 +397,66 @@ func events(ch chan string) {
 	}()
 
 	t1 := time.Tick(30 * time.Second)
-	t2 := time.Tick(3 * time.Minute)
+	t2 := time.Tick(1 * time.Minute)
 	for {
 		select {
 		case <-t1:
+			tn := time.Now()
 			msg := &pubsub.Message{
-				Timestamp: float64(time.Now().UnixNano()) / 1000000000,
-				Type:      GPRMC,
+				Timestamp: float64(tn.UnixNano()) / 1000000000,
+				Type:      "GPRMC",
 			}
-			val := fmt.Sprint("$GPRMC,161940.0,A,0612.751941,N,07534.640897,W,0.0,0.0,100518,4.7,W,A*0B")
+			var lat float64
+			var lon float64
+			daten := tn.Format("020106")
+			timen := tn.Format("150405")
+			select {
+			case v := <-chPoints:
+				lon = v[0]
+				lat = v[1]
+			}
+			msg.Value = fmt.Sprintf("$GPRMC,%v.0,A,%v,%v,%03.1f,0.0,%v,4.7,W,A*0B",
+				timen, gpsnmea.DecimalDegreeToLat(lat), gpsnmea.DecimalDegreeToLon(lon), rand.Float64()*20, daten)
+			v, err := json.Marshal(msg)
+			if err != nil {
+				break
+			}
+			fmt.Printf("%s\n", v)
+			ch <- string(v)
 
 		case <-t2:
-			ch <- rand.Intn(6000) + 1000
+			tn := time.Now()
+			msg := &pubsub.Message{
+				Timestamp: float64(tn.UnixNano()) / 1000000000,
+				Type:      "TURNSTILE",
+			}
+			var lat float64
+			var lon float64
+			daten := tn.Format("020106")
+			timen := tn.Format("150405")
+			select {
+			case v := <-chPoints:
+				lon = v[0]
+				lat = v[1]
+			}
+			val := struct {
+				Coord              string `json:"coord"`
+				TurnstileUpCount   int    `json:"turnstileUpCount"`
+				TurnstileDownCount int    `json:"turnstileDownCount"`
+			}{
+				fmt.Sprintf("$GPRMC,%v.0,A,%v,%v,%03.1f,0.0,%v,4.7,W,A*0B",
+					timen, gpsnmea.DecimalDegreeToLat(lat), gpsnmea.DecimalDegreeToLon(lon), rand.Float64()*20, daten),
+				rand.Intn(15),
+				rand.Intn(10),
+			}
+
+			msg.Value = val
+
+			v, err := json.Marshal(msg)
+			if err != nil {
+				break
+			}
+			ch <- string(v)
 		}
 	}
 }
