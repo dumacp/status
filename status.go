@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/dumacp/pubsub"
 	"log"
 	"math/rand"
 	"os/exec"
 	"time"
+
+	"github.com/dumacp/pubsub"
 )
 
 var timeout int
@@ -44,27 +45,31 @@ type DataDevice struct {
 }
 
 type Status struct {
-	Gstatus         map[string]interface{} `json:"gstatus"`
-	SnDev           string                 `json:"sn-dev"`
-	SnModem         string                 `json:"sn-modem"`
-	SnDisplay       string                 `json:"sn-display"`
-	TimeStamp       float64                `json:"timeStamp"`
-	IpMaskMap       map[string][]string    `json:"ipMaskMap"`
-	Hostname        string                 `json:"hostname"`
-	AppVers         map[string]string      `json:"AppVers"`
-	SimStatus       string                 `json:"simStatus"`
-	SimImei         string                 `json:"simImei"`
-	UsosTranspCount int                    `json:"usosTranspCount"`
-	ErrsTranspCount int                    `json:"errsTranspCount"`
-	Volt            map[string]float64     `json:"volt"`
-	Mac             string                 `json:"mac"`
-	AppTablesVers   map[string]string      `json:"AppTablesVers"`
-	CpuStatus       []float64              `json:"cpuStatus"`
-	Dns             []string               `json:"dns"`
-	UpTime          string                 `json:"upTime"`
-	DeviceDataList  []*DataDevice          `json:"deviceDataList"`
-	Gateway         string                 `json:"gateway"`
-	TypeDev         string                 `json:"type-dev"`
+	Gstatus                     map[string]interface{} `json:"gstatus"`
+	SnDev                       string                 `json:"sn-dev"`
+	SnModem                     string                 `json:"sn-modem"`
+	SnDisplay                   string                 `json:"sn-display"`
+	TimeStamp                   float64                `json:"timeStamp"`
+	IpMaskMap                   map[string][]string    `json:"ipMaskMap"`
+	Hostname                    string                 `json:"hostname"`
+	AppVers                     map[string]string      `json:"AppVers"`
+	SimStatus                   string                 `json:"simStatus"`
+	SimImei                     string                 `json:"simImei"`
+	UsosTranspCount             int                    `json:"usosTranspCount"`
+	ErrsTranspCount             int                    `json:"errsTranspCount"`
+	Volt                        map[string]float64     `json:"volt"`
+	Mac                         string                 `json:"mac"`
+	AppTablesVers               map[string]string      `json:"AppTablesVers"`
+	CpuStatus                   []float64              `json:"cpuStatus"`
+	Dns                         []string               `json:"dns"`
+	UpTime                      string                 `json:"upTime"`
+	DeviceDataList              []*DataDevice          `json:"deviceDataList"`
+	Gateway                     string                 `json:"gateway"`
+	TypeDev                     string                 `json:"type-dev"`
+	FrontDoorPassengerUpCount   int                    `json:"frontDoorPassengerUpCount"`
+	FrontDoorPassengerDownCount int                    `json:"frontDoorPassengerDownCount"`
+	BackDoorPassengerUpCount    int                    `json:"backDoorPassengerUpCount"`
+	BackDoorPassengerDownCount  int                    `json:"backDoorPassengerDownCount"`
 }
 
 func main() {
@@ -174,11 +179,16 @@ func prepare(m *Status) ([]byte, error) {
 
 	m.TimeStamp = float64(time.Now().UnixNano()) / 1000000000
 	uptime := getUptime()
-	usos, errores := usosTransp()
+	//usos, errores := usosTransp()
+	counters := contadores()
+	m.FrontDoorPassengerUpCount = counters[0]
+	m.FrontDoorPassengerDownCount = counters[1]
+	m.BackDoorPassengerUpCount = counters[2]
+	m.BackDoorPassengerDownCount = counters[3]
 
 	m.UpTime = uptime
-	m.UsosTranspCount = usos
-	m.ErrsTranspCount = errores
+	m.UsosTranspCount = 0
+	m.ErrsTranspCount = 0
 
 	b3, err := json.Marshal(m)
 
@@ -284,6 +294,20 @@ func usosTransp() (usos int, errores int) {
 	return
 }
 
+func contadores() []int {
+	puertaDelanteraIngresos := rand.Intn(10)
+	puertaTraseraSalidas := 0
+	puertaDelanteraSalidas := 0
+	puertaTraseraIngresos := 0
+	if puertaDelanteraIngresos > 3 {
+		puertaTraseraSalidas = rand.Intn(5)
+	}
+	if puertaDelanteraSalidas > 3 {
+		puertaDelanteraSalidas = rand.Intn(3)
+	}
+	return []int{puertaDelanteraIngresos, puertaDelanteraSalidas, puertaTraseraIngresos, puertaTraseraSalidas}
+}
+
 func randMemory(ch chan int) {
 	t1 := time.Tick(60 * time.Second)
 	t2 := time.Tick(300 * time.Second)
@@ -321,6 +345,50 @@ func randSd(ch chan int) {
 		select {
 		case <-t1:
 			ch <- rand.Intn(500) + 500
+		case <-t2:
+			ch <- rand.Intn(6000) + 1000
+		}
+	}
+}
+
+func events(ch chan string) {
+	if len(ruta) <= 0 {
+		return
+	}
+	var1 := make(map[string][][][]float64)
+	if err := json.Unmarshal(ruta, &var1); err != nil {
+		return
+	}
+
+	values, ok := var1["ruta"]
+	if !ok {
+		return
+	}
+
+	itirenario := values[0]
+	itirenario = append(itirenario, values[1]...)
+
+	chPoints := make(chan [][]float64, 0)
+
+	go func() {
+		for {
+			for _, v := range itirenario {
+				chPoints <- v
+			}
+		}
+	}()
+
+	t1 := time.Tick(30 * time.Second)
+	t2 := time.Tick(3 * time.Minute)
+	for {
+		select {
+		case <-t1:
+			msg := &pubsub.Message{
+				Timestamp: float64(time.Now().UnixNano()) / 1000000000,
+				Type:      GPRMC,
+			}
+			val := fmt.Sprint("$GPRMC,161940.0,A,0612.751941,N,07534.640897,W,0.0,0.0,100518,4.7,W,A*0B")
+
 		case <-t2:
 			ch <- rand.Intn(6000) + 1000
 		}
