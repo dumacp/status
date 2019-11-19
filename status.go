@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/dumacp/gpsnmea"
-
 	"github.com/dumacp/pubsub"
 )
 
@@ -397,7 +396,7 @@ func events(ch chan string) {
 	}()
 
 	t1 := time.Tick(30 * time.Second)
-	t2 := time.Tick(1 * time.Minute)
+	t2 := time.Tick(60 * time.Second)
 	for {
 		select {
 		case <-t1:
@@ -415,8 +414,20 @@ func events(ch chan string) {
 				lon = v[0]
 				lat = v[1]
 			}
-			msg.Value = fmt.Sprintf("$GPRMC,%v.0,A,%v,%v,%03.1f,0.0,%v,4.7,W,A*0B",
+
+			frame := fmt.Sprintf("$GPRMC,%v.0,A,%v,%v,%3.1f,0.0,%v,4.7,W,A*",
 				timen, gpsnmea.DecimalDegreeToLat(lat), gpsnmea.DecimalDegreeToLon(lon), rand.Float64()*20, daten)
+
+			// frame := "$GPRMC,164016.0,A,0615.179728,N,07535.343742,W,0.0,0.0,100518,4.7,W,A*"
+
+			checksum := byte(0)
+			frameB := []byte(frame)
+			for _, v := range frameB[1 : len(frameB)-1] {
+				checksum = checksum ^ v
+			}
+			frame = fmt.Sprintf("%v%02X", frame, checksum)
+
+			msg.Value = frame
 			v, err := json.Marshal(msg)
 			if err != nil {
 				break
@@ -439,13 +450,23 @@ func events(ch chan string) {
 				lon = v[0]
 				lat = v[1]
 			}
+			frame := fmt.Sprintf("$GPRMC,%v.0,A,%v,%v,%3.1f,0.0,%v,4.7,W,A*",
+				timen, gpsnmea.DecimalDegreeToLat(lat), gpsnmea.DecimalDegreeToLon(lon), rand.Float64()*20, daten)
+			// frame := "$GPRMC,164016.0,A,0615.179728,N,07535.343742,W,0.0,0.0,100518,4.7,W,A*"
+
+			checksum := byte(0)
+			frameB := []byte(frame)
+			for _, v := range frameB[1 : len(frameB)-1] {
+				checksum = checksum ^ v
+			}
+			frame = fmt.Sprintf("%v%02X", frame, checksum)
+
 			val := struct {
 				Coord              string `json:"coord"`
 				TurnstileUpCount   int    `json:"turnstileUpCount"`
 				TurnstileDownCount int    `json:"turnstileDownCount"`
 			}{
-				fmt.Sprintf("$GPRMC,%v.0,A,%v,%v,%03.1f,0.0,%v,4.7,W,A*0B",
-					timen, gpsnmea.DecimalDegreeToLat(lat), gpsnmea.DecimalDegreeToLon(lon), rand.Float64()*20, daten),
+				frame,
 				rand.Intn(15),
 				rand.Intn(10),
 			}
@@ -456,6 +477,7 @@ func events(ch chan string) {
 			if err != nil {
 				break
 			}
+			fmt.Printf("%s\n", v)
 			ch <- string(v)
 		}
 	}
