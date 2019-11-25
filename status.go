@@ -145,15 +145,190 @@ func main() {
 		}
 	}()
 
-	evtChan := make(chan string)
-	go pub.Publish("EVENTS/event", evtChan)
+	gpsCh := make(chan string)
+	go pub.Publish("EVENTS/gps", gpsCh)
 	go func() {
 		for v := range pub.Err {
 			log.Println(v)
 		}
 	}()
 
-	go events(evtChan)
+	turnCh := make(chan string)
+	go pub.Publish("EVENTS/turnstile", turnCh)
+	go func() {
+		for v := range pub.Err {
+			log.Println(v)
+		}
+	}()
+
+	doorCh := make(chan string)
+	go pub.Publish("EVENTS/doors", doorCh)
+	go func() {
+		for v := range pub.Err {
+			log.Println(v)
+		}
+	}()
+
+	go func() {
+		if len(ruta) <= 0 {
+			return
+		}
+		var1 := make(map[string][][][]float64)
+		if err := json.Unmarshal(ruta, &var1); err != nil {
+			return
+		}
+
+		values, ok := var1["ruta"]
+		if !ok {
+			return
+		}
+
+		itirenario := values[0]
+		itirenario = append(itirenario, values[1]...)
+
+		chPoints := make(chan []float64, 0)
+
+		go func() {
+			for {
+				for _, v := range itirenario {
+					chPoints <- v
+				}
+			}
+		}()
+
+		t1 := time.Tick(5 * time.Second)
+		t2 := time.Tick(7 * time.Second)
+		t3 := time.Tick(9 * time.Second)
+		for {
+			select {
+			case <-t1:
+				tn := time.Now()
+				msg := &pubsub.Message{
+					Timestamp: float64(tn.UnixNano()) / 1000000000,
+					Type:      "GPRMC",
+				}
+				var lat float64
+				var lon float64
+				daten := tn.Format("020106")
+				timen := tn.Format("150405")
+				select {
+				case v := <-chPoints:
+					lon = v[0]
+					lat = v[1]
+				}
+
+				frame := fmt.Sprintf("$GPRMC,%v.0,A,%v,%v,%3.1f,0.0,%v,4.7,W,A*",
+					timen, gpsnmea.DecimalDegreeToLat(lat), gpsnmea.DecimalDegreeToLon(lon), rand.Float64()*20, daten)
+
+				// frame := "$GPRMC,164016.0,A,0615.179728,N,07535.343742,W,0.0,0.0,100518,4.7,W,A*"
+
+				checksum := byte(0)
+				frameB := []byte(frame)
+				for _, v := range frameB[1 : len(frameB)-1] {
+					checksum = checksum ^ v
+				}
+				frame = fmt.Sprintf("%v%02X", frame, checksum)
+
+				msg.Value = frame
+				v, err := json.Marshal(msg)
+				if err != nil {
+					break
+				}
+				fmt.Printf("%s\n", v)
+				gpsCh <- string(v)
+
+			case <-t2:
+				tn := time.Now()
+				msg := &pubsub.Message{
+					Timestamp: float64(tn.UnixNano()) / 1000000000,
+					Type:      "TURNSTILE",
+				}
+				var lat float64
+				var lon float64
+				daten := tn.Format("020106")
+				timen := tn.Format("150405")
+				select {
+				case v := <-chPoints:
+					lon = v[0]
+					lat = v[1]
+				}
+				frame := fmt.Sprintf("$GPRMC,%v.0,A,%v,%v,%3.1f,0.0,%v,4.7,W,A*",
+					timen, gpsnmea.DecimalDegreeToLat(lat), gpsnmea.DecimalDegreeToLon(lon), rand.Float64()*20, daten)
+				// frame := "$GPRMC,164016.0,A,0615.179728,N,07535.343742,W,0.0,0.0,100518,4.7,W,A*"
+
+				checksum := byte(0)
+				frameB := []byte(frame)
+				for _, v := range frameB[1 : len(frameB)-1] {
+					checksum = checksum ^ v
+				}
+				frame = fmt.Sprintf("%v%02X", frame, checksum)
+
+				val := struct {
+					Coord              string `json:"coord"`
+					TurnstileUpCount   int    `json:"turnstileUpCount"`
+					TurnstileDownCount int    `json:"turnstileDownCount"`
+				}{
+					frame,
+					rand.Intn(15),
+					rand.Intn(10),
+				}
+
+				msg.Value = val
+
+				v, err := json.Marshal(msg)
+				if err != nil {
+					break
+				}
+				//fmt.Printf("%s\n", v)
+				turnCh <- string(v)
+
+			case <-t3:
+				tn := time.Now()
+				msg := &pubsub.Message{
+					Timestamp: float64(tn.UnixNano()) / 1000000000,
+					Type:      "DOOR",
+				}
+				var lat float64
+				var lon float64
+				daten := tn.Format("020106")
+				timen := tn.Format("150405")
+				select {
+				case v := <-chPoints:
+					lon = v[0]
+					lat = v[1]
+				}
+				frame := fmt.Sprintf("$GPRMC,%v.0,A,%v,%v,%3.1f,0.0,%v,4.7,W,A*",
+					timen, gpsnmea.DecimalDegreeToLat(lat), gpsnmea.DecimalDegreeToLon(lon), rand.Float64()*20, daten)
+				// frame := "$GPRMC,164016.0,A,0615.179728,N,07535.343742,W,0.0,0.0,100518,4.7,W,A*"
+
+				checksum := byte(0)
+				frameB := []byte(frame)
+				for _, v := range frameB[1 : len(frameB)-1] {
+					checksum = checksum ^ v
+				}
+				frame = fmt.Sprintf("%v%02X", frame, checksum)
+
+				val := struct {
+					Coord string `json:"coord"`
+					Id    int    `json:"id"`
+					State int    `json:"state"`
+				}{
+					frame,
+					rand.Intn(1),
+					rand.Intn(1),
+				}
+
+				msg.Value = val
+
+				v, err := json.Marshal(msg)
+				if err != nil {
+					break
+				}
+				//fmt.Printf("%s\n", v)
+				doorCh <- string(v)
+			}
+		}
+	}()
 
 	for {
 		rand.Seed(time.Now().UnixNano())
@@ -211,7 +386,7 @@ func prepare(m *Status) ([]byte, error) {
 		log.Println(err)
 		return nil, err
 	}
-	log.Printf("message: %s\n", b3)
+	//log.Printf("message: %s\n", b3)
 	return b3, nil
 }
 
@@ -364,121 +539,6 @@ func randSd(ch chan int) {
 			ch <- rand.Intn(500) + 500
 		case <-t2:
 			ch <- rand.Intn(6000) + 1000
-		}
-	}
-}
-
-func events(ch chan string) {
-	if len(ruta) <= 0 {
-		return
-	}
-	var1 := make(map[string][][][]float64)
-	if err := json.Unmarshal(ruta, &var1); err != nil {
-		return
-	}
-
-	values, ok := var1["ruta"]
-	if !ok {
-		return
-	}
-
-	itirenario := values[0]
-	itirenario = append(itirenario, values[1]...)
-
-	chPoints := make(chan []float64, 0)
-
-	go func() {
-		for {
-			for _, v := range itirenario {
-				chPoints <- v
-			}
-		}
-	}()
-
-	t1 := time.Tick(30 * time.Second)
-	t2 := time.Tick(60 * time.Second)
-	for {
-		select {
-		case <-t1:
-			tn := time.Now()
-			msg := &pubsub.Message{
-				Timestamp: float64(tn.UnixNano()) / 1000000000,
-				Type:      "GPRMC",
-			}
-			var lat float64
-			var lon float64
-			daten := tn.Format("020106")
-			timen := tn.Format("150405")
-			select {
-			case v := <-chPoints:
-				lon = v[0]
-				lat = v[1]
-			}
-
-			frame := fmt.Sprintf("$GPRMC,%v.0,A,%v,%v,%3.1f,0.0,%v,4.7,W,A*",
-				timen, gpsnmea.DecimalDegreeToLat(lat), gpsnmea.DecimalDegreeToLon(lon), rand.Float64()*20, daten)
-
-			// frame := "$GPRMC,164016.0,A,0615.179728,N,07535.343742,W,0.0,0.0,100518,4.7,W,A*"
-
-			checksum := byte(0)
-			frameB := []byte(frame)
-			for _, v := range frameB[1 : len(frameB)-1] {
-				checksum = checksum ^ v
-			}
-			frame = fmt.Sprintf("%v%02X", frame, checksum)
-
-			msg.Value = frame
-			v, err := json.Marshal(msg)
-			if err != nil {
-				break
-			}
-			fmt.Printf("%s\n", v)
-			ch <- string(v)
-
-		case <-t2:
-			tn := time.Now()
-			msg := &pubsub.Message{
-				Timestamp: float64(tn.UnixNano()) / 1000000000,
-				Type:      "TURNSTILE",
-			}
-			var lat float64
-			var lon float64
-			daten := tn.Format("020106")
-			timen := tn.Format("150405")
-			select {
-			case v := <-chPoints:
-				lon = v[0]
-				lat = v[1]
-			}
-			frame := fmt.Sprintf("$GPRMC,%v.0,A,%v,%v,%3.1f,0.0,%v,4.7,W,A*",
-				timen, gpsnmea.DecimalDegreeToLat(lat), gpsnmea.DecimalDegreeToLon(lon), rand.Float64()*20, daten)
-			// frame := "$GPRMC,164016.0,A,0615.179728,N,07535.343742,W,0.0,0.0,100518,4.7,W,A*"
-
-			checksum := byte(0)
-			frameB := []byte(frame)
-			for _, v := range frameB[1 : len(frameB)-1] {
-				checksum = checksum ^ v
-			}
-			frame = fmt.Sprintf("%v%02X", frame, checksum)
-
-			val := struct {
-				Coord              string `json:"coord"`
-				TurnstileUpCount   int    `json:"turnstileUpCount"`
-				TurnstileDownCount int    `json:"turnstileDownCount"`
-			}{
-				frame,
-				rand.Intn(15),
-				rand.Intn(10),
-			}
-
-			msg.Value = val
-
-			v, err := json.Marshal(msg)
-			if err != nil {
-				break
-			}
-			fmt.Printf("%s\n", v)
-			ch <- string(v)
 		}
 	}
 }
